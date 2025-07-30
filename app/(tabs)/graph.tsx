@@ -1,63 +1,82 @@
-import React, { useMemo, useState } from 'react';
-import { View, Button } from 'react-native';
-import { VictoryAxis, VictoryBar, VictoryChart, VictoryStack } from 'victory-native';
 import { useStats } from '@/contexts/StatsContext';
+import React, { useMemo, useState } from 'react';
+import { Button, StyleSheet, View } from 'react-native';
+import { CartesianChart, StackedBar } from 'victory-native';
 
 type Scope = 'day' | 'week' | 'month';
+
+interface Row {
+  hour: number;
+  ping: number;
+  answered: number;
+  entrance: number;
+}
+
+const COLORS = ['#4e79a7', '#59a14f', '#e15759'] as const;
 
 export default function GraphScreen() {
   const { events } = useStats();
   const [scope, setScope] = useState<Scope>('day');
 
-  const data = useMemo(() => {
+  /** ★ 正しく Row[] を返す */
+  const rows = useMemo<Row[]>(() => {
     const now = new Date();
-    let start = new Date(now);
+    const start = new Date(now);
     if (scope === 'day') start.setHours(0, 0, 0, 0);
-    if (scope === 'week') {
-      start.setDate(now.getDate() - 6);
-      start.setHours(0, 0, 0, 0);
-    }
-    if (scope === 'month') {
-      start.setDate(1);
-      start.setHours(0, 0, 0, 0);
-    }
-    const filtered = events.filter((e) => e.timestamp >= start.getTime());
-    const buckets: Record<number, { ping: number; answered: number; entrance: number }> = {};
-    filtered.forEach((e) => {
-      const d = new Date(e.timestamp);
-      const hour = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime();
-      if (!buckets[hour]) buckets[hour] = { ping: 0, answered: 0, entrance: 0 };
-      buckets[hour][e.type]++;
-    });
-    const hours = Object.keys(buckets)
-      .map((k) => Number(k))
-      .sort((a, b) => a - b);
-    return hours.map((h) => ({
-      hour: new Date(h).getHours(),
-      ...buckets[h],
-    }));
+    if (scope === 'week') { start.setDate(now.getDate() - 6); start.setHours(0, 0, 0, 0); }
+    if (scope === 'month') { start.setDate(1); start.setHours(0, 0, 0, 0); }
+
+    const buckets: Record<number, Omit<Row, 'hour'>> = {};
+    events
+      .filter(e => e.timestamp >= start.getTime())
+      .forEach(e => {
+        const d = new Date(e.timestamp);
+        const key = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours());
+        if (!buckets[key]) buckets[key] = { ping: 0, answered: 0, entrance: 0 };
+        buckets[key][e.type as keyof typeof buckets[key]] += 1;
+      });
+
+    return Object.keys(buckets)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(k => ({ hour: new Date(k).getHours(), ...buckets[k] }));
   }, [events, scope]);
 
-  const pingData = data.map((d) => ({ x: d.hour, y: d.ping }));
-  const answeredData = data.map((d) => ({ x: d.hour, y: d.answered }));
-  const entranceData = data.map((d) => ({ x: d.hour, y: d.entrance }));
-
   return (
-    <View style={{ flex: 1, padding: 16 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+    <View style={styles.root}>
+      <View style={styles.btnRow}>
         <Button title="日" onPress={() => setScope('day')} />
         <Button title="週" onPress={() => setScope('week')} />
         <Button title="月" onPress={() => setScope('month')} />
       </View>
-      <VictoryChart domainPadding={{ x: 10 }}>
-        <VictoryAxis dependentAxis />
-        <VictoryAxis tickFormat={(t) => `${t}h`} />
-        <VictoryStack>
-          <VictoryBar data={pingData} style={{ data: { fill: '#4e79a7' } }} />
-          <VictoryBar data={answeredData} style={{ data: { fill: '#59a14f' } }} />
-          <VictoryBar data={entranceData} style={{ data: { fill: '#e15759' } }} />
-        </VictoryStack>
-      </VictoryChart>
+
+      {/* ★ ジェネリックを明示 */}
+      <CartesianChart<Row, 'hour', ['ping', 'answered', 'entrance']>
+        style={styles.chart}
+        data={rows}
+        xKey="hour"
+        yKeys={['ping', 'answered', 'entrance'] as const}
+        domainPadding={{ left: 16, right: 16 }}
+        axisOptions={{
+          formatXLabel: v => `${v}h`,
+          tickCount: { x: 24, y: 4 },
+        }}
+      >
+        {({ points, chartBounds }) => (
+          <StackedBar
+            points={points}
+            chartBounds={chartBounds}
+            barWidth={12}
+            colors={COLORS}
+          />
+        )}
+      </CartesianChart>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1, padding: 16 },
+  btnRow: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 },
+  chart: { flex: 1 },
+});
